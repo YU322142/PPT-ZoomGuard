@@ -1,0 +1,20 @@
+{
+  "name": "LessonZoomGuard",
+  "version": "0.1.0-preview",
+  "platform": "win64",
+  "dllSha256": "3DE07163F290BF18203A584652FD368A79348105614182C24AFB68446C3B7D75",
+  "sourceSha256": "0E17AC5AD10C6F035A302CA4CC71BDF2D447CE8BD716BF11D59F5AD0F50CA2D2",
+  "testedPowerPoint": "16.0.17932.21056",
+  "testedOfficeVersion": "2408",
+  "testedWindows": "Windows 11",
+  "physicalDisplayValidated": false,
+  "inkValidated": false,
+  "license": "MIT",
+  "repository": "https://github.com/YU322142/PPT-ZoomGuard",
+  "userFeedback": {
+    "pinchBlockingConfirmed": true,
+    "leftMenuBarBlocked": true,
+    "leftMenuBarLimitationRetained": true,
+    "scope": "Partial device feedback; full compatibility validation remains pending."
+  }
+}

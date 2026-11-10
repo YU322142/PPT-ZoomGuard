@@ -1,0 +1,12 @@
+# Compiled files are distributed through GitHub Releases.
+*.dll
+*.exe
+*.pdb
+*.zip
+*.log
+/dist/
+/source/build/
+.vs/
+.idea/
+Thumbs.db
+Desktop.ini
