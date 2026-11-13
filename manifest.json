@@ -7,7 +7,7 @@
   "testedPowerPoint": "16.0.17932.21056",
   "testedOfficeVersion": "2408",
   "testedWindows": "Windows 11",
-  "physicalDisplayValidated": false,
+  "physicalDisplayValidated": true,
   "inkValidated": false,
   "license": "MIT",
   "repository": "https://github.com/YU322142/PPT-ZoomGuard",
@@ -18,12 +18,20 @@
     "videoClick": true,
     "videoAfterMultiTouch": true,
     "nativeMagnifier": true,
-    "scope": "Windows touch injection in an independent temporary presentation; classroom display validation pending.",
+    "scope": "Windows touch injection in a temporary presentation. Separate user feedback confirms three core checks on the classroom display.",
     "navigationSafetyNet": true
   },
   "userFeedback": {
     "reportedFailingVersion": "0.2.0-preview",
-    "issue": "Physical classroom display can still enter slide overview; driver-specific cause not yet reproduced.",
-    "currentVersionDeviceValidated": false
-  }
+    "currentVersionDeviceValidated": true,
+    "previousIssue": "v0.2.0 could still enter slide overview on the classroom display; v0.2.1 core behavior subsequently confirmed by user.",
+    "confirmedVersion": "0.2.1-preview",
+    "confirmedDate": "2026-11-13",
+    "confirmedChecks": {
+      "noUnexpectedSlideOverview": true,
+      "embeddedVideoPlayback": true,
+      "menuBarInteraction": true
+    }
+  },
+  "physicalDisplayValidationScope": "User confirmed three core checks on the classroom display: no unexpected overview, embedded video playback, and menu bar interaction. Other compatibility checks remain pending."
 }
