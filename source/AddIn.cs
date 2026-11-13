@@ -10,7 +10,7 @@ using Extensibility;
 
 [assembly: ComVisible(false)]
 [assembly: AssemblyTitle("Lesson Zoom Guard")]
-[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.2.1.0")]
 
 namespace LessonZoomGuard
 {
@@ -34,13 +34,16 @@ namespace LessonZoomGuard
         private IntPtr eventHook;
         private IntPtr foregroundHook;
         private bool stopping;
+        private bool checkingNavigation;
+        private long navigationClosures;
+        private string navigationError = "";
 
         public void OnConnection(object app, ext_ConnectMode mode, object addIn, ref Array custom)
         {
             try
             {
                 application = app;
-                Log.Write("connected version=0.2.0-preview arch=" + (IntPtr.Size * 8));
+                Log.Write("connected version=0.2.1-preview arch=" + (IntPtr.Size * 8));
                 Start();
                 addIn.GetType().InvokeMember("Object", BindingFlags.SetProperty, null, addIn,
                     new object[] { new GuardDiagnostics(this) });
@@ -65,7 +68,9 @@ namespace LessonZoomGuard
 
         private void WindowEvent(IntPtr hook, uint ev, IntPtr h, int obj, int child, uint thread, uint time)
         {
-            if (stopping || obj != 0 || child != 0 || h == IntPtr.Zero) return;
+            if (stopping || h == IntPtr.Zero) return;
+            if (ev == 0x8002) CloseNavigation();
+            if (obj != 0 || child != 0) return;
             try
             {
                 if (Native.ClassName(h) == "screenClass" && ev != 0x8001) AddShow(h);
@@ -110,6 +115,7 @@ namespace LessonZoomGuard
             if (stopping) return;
             try
             {
+                CloseNavigation();
                 foreach (IntPtr h in Native.ShowWindows((uint)Process.GetCurrentProcess().Id)) AddShow(h);
                 foreach (var pair in new List<KeyValuePair<IntPtr, ShowGuard>>(shows))
                 {
@@ -118,6 +124,53 @@ namespace LessonZoomGuard
                 }
             }
             catch (Exception ex) { Log.Write("tick error " + ex.GetType().Name + " " + ex.Message); }
+        }
+
+        // Input filtering is best-effort across touch drivers. Enforce the
+        // user-visible invariant separately through PowerPoint's own navigation
+        // object, including paths that do not deliver WM_POINTER to screenClass.
+        private void CloseNavigation()
+        {
+            if (stopping || application == null || checkingNavigation) return;
+            checkingNavigation = true;
+            object windows = null;
+            try
+            {
+                windows = ComGet(application, "SlideShowWindows");
+                int count = Convert.ToInt32(ComGet(windows, "Count"));
+                for (int index = 1; index <= count; index++)
+                {
+                    object show = null, navigation = null;
+                    try
+                    {
+                        show = ComGet(windows, "Item", index);
+                        navigation = ComGet(show, "SlideNavigation");
+                        if (!Convert.ToBoolean(ComGet(navigation, "Visible"))) continue;
+                        navigation.GetType().InvokeMember("Visible", BindingFlags.SetProperty, null,
+                            navigation, new object[] { false });
+                        navigationClosures++;
+                        Log.Write("navigation closed count=" + navigationClosures);
+                        foreach (ShowGuard guard in new List<ShowGuard>(shows.Values)) guard.NavigationClosed();
+                    }
+                    finally
+                    {
+                        foreach (object item in new object[] { navigation, show })
+                            if (item != null && Marshal.IsComObject(item)) Marshal.ReleaseComObject(item);
+                    }
+                }
+                navigationError = "";
+            }
+            catch (Exception ex)
+            {
+                string error = ex.GetType().Name + ":" + ex.HResult.ToString("X");
+                if (navigationError != error) Log.Write("navigation check error " + error);
+                navigationError = error;
+            }
+            finally
+            {
+                if (windows != null && Marshal.IsComObject(windows)) Marshal.ReleaseComObject(windows);
+                checkingNavigation = false;
+            }
         }
 
         private void Stop()
@@ -136,7 +189,8 @@ namespace LessonZoomGuard
         public string GetStatus()
         {
             Tick(null, EventArgs.Empty);
-            var result = new StringBuilder("LessonZoomGuard 0.2.0-preview");
+            var result = new StringBuilder("LessonZoomGuard 0.2.1-preview");
+            result.Append("\nnavigationClosed=").Append(navigationClosures).Append(" navigationError=").Append(navigationError);
             foreach (ShowGuard guard in shows.Values) result.Append("\n").Append(guard.Status);
             if (shows.Count == 0) result.Append("\nNo slide-show window.");
             return result.ToString();
@@ -202,6 +256,14 @@ namespace LessonZoomGuard
             if (current > 0) position = current;
             if (selection && !selectorSeen) SetMode(true, "native magnifier selector");
             selectorSeen = selection;
+        }
+
+        public void NavigationClosed()
+        {
+            SetMode(false, "navigation safety net");
+            // Do not immediately interpret a lingering selector as a fresh,
+            // intentional request to enable zoom after closing the overview.
+            selectorSeen = Native.HasVisibleSelector(window);
         }
 
         public bool FilterPointer(IntPtr recipient, uint message, IntPtr wParam)

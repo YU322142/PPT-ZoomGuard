@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $taskProductId = '{F1C4E46D-337F-4504-9F69-81A47FE21183}'
 $taskProgId = 'LessonZoomGuard.Connect'
 $taskProductRoot = Join-Path $env:LOCALAPPDATA 'LessonZoomGuard'
-$taskInstallRoot = [IO.Path]::GetFullPath((Join-Path $taskProductRoot '0.2.0'))
+$taskInstallRoot = [IO.Path]::GetFullPath((Join-Path $taskProductRoot '0.2.1'))
 $taskAllowedRoot = [IO.Path]::GetFullPath($taskProductRoot).TrimEnd('\') + '\'
 if (-not $taskInstallRoot.StartsWith($taskAllowedRoot,[StringComparison]::OrdinalIgnoreCase)) { throw '安装目录校验失败。' }
 $taskDll = Join-Path $PSScriptRoot 'LessonZoomGuard.dll'
@@ -49,7 +49,7 @@ try {
     $taskKey.SetValue('Description','正常放映时过滤双指操作，使用原有放大镜时临时放开。')
     $taskKey.SetValue('ProductId',$taskProductId)
     $taskKey.SetValue('InstallRoot',$taskInstallRoot)
-    $taskKey.SetValue('Version','0.2.0')
+    $taskKey.SetValue('Version','0.2.1')
     $taskKey.SetValue('CommandLineSafe',1,[Microsoft.Win32.RegistryValueKind]::DWord)
     $taskKey.SetValue('LoadBehavior',3,[Microsoft.Win32.RegistryValueKind]::DWord)
     $taskKey.Dispose()

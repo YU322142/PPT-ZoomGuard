@@ -1,9 +1,9 @@
 {
   "name": "LessonZoomGuard",
-  "version": "0.2.0-preview",
+  "version": "0.2.1-preview",
   "platform": "win64",
-  "dllSha256": "BF6F153A43FCD130E157C24AA4B0CEB53AC536ADE21A9497538764421D504540",
-  "sourceSha256": "208DF209C4D3F75B11FC0734FF74879175D354195CE4D40541EAD544AEE60D8B",
+  "dllSha256": "6F475E1A0661242116A2A7151B83C5E5CB4BBB1391218630BA6213C601D67FA5",
+  "sourceSha256": "7930BE8FAF7141D04E80A71DC2BCC97CD154FF49A167C802ECD2138ED91DE56D",
   "testedPowerPoint": "16.0.17932.21056",
   "testedOfficeVersion": "2408",
   "testedWindows": "Windows 11",
@@ -18,6 +18,12 @@
     "videoClick": true,
     "videoAfterMultiTouch": true,
     "nativeMagnifier": true,
-    "scope": "Windows touch injection in an independent temporary presentation; classroom display validation pending."
+    "scope": "Windows touch injection in an independent temporary presentation; classroom display validation pending.",
+    "navigationSafetyNet": true
+  },
+  "userFeedback": {
+    "reportedFailingVersion": "0.2.0-preview",
+    "issue": "Physical classroom display can still enter slide overview; driver-specific cause not yet reproduced.",
+    "currentVersionDeviceValidated": false
   }
 }
