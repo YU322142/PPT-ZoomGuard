@@ -1,55 +1,54 @@
 # 开发与验证记录
 
-实现为 .NET Framework COM 加载项，使用 Office 自带 Add-in Designer 类型库定义的 `_IDTExtensibility2`。类型库以 `/sysarray` 导入，并嵌入互操作类型；PowerPoint 的回调数组可能具有非零下限，不能使用普通零下标 `object[]` 替代。
+## v0.2.0：保留原生单指输入
 
-## 最终实现
+实现为 .NET Framework COM 加载项，使用 Office Add-in Designer 类型库定义的 `_IDTExtensibility2`。类型库以 `/sysarray` 导入并嵌入互操作类型，保留 PowerPoint 回调数组的非零下限兼容性。
 
-- 发现当前 PowerPoint 进程的 `screenClass` 放映窗口。
-- 正常模式使用无按钮、无文字的输入过滤窗口，过滤多点触摸，处理单指点击、滑动和长按。
-- 原生 `PPTOpticalZoom` 选区出现时，移除过滤窗口，允许 PowerPoint 处理双指缩放。
-- Esc／原生右键退出缩放／换页后恢复过滤；切换到编辑窗口或其他应用时隐藏。
-- 过滤窗口的黑色填充以 1/255 的透明度显示，以保留输入命中能力。它不承担显示提示的功能。
-- 原生笔输入转发需要真实触摸设备继续验证；此项不视为已通过。
+- 在当前 PowerPoint 进程、当前 UI 线程中发现并附加到 `screenClass` 放映窗口。
+- 在窗口消息实际分派时读取 `WM_POINTER*` 和 `GetPointerFrameInfo`。在队列钩子中读取完整触摸帧不足以可靠拦截，因此不使用队列钩子作为发布实现。
+- 同时检查完整帧的接触数量与已落下的触点，避免两个手指同时落下时先放过一次点击。
+- 出现多指后，直接调用原窗口处理过程发送 `WM_POINTERCAPTURECHANGED`，取消已经送达的单指操作。取消消息必须绕过自身过滤，否则 PowerPoint 收不到清理通知，后续视频点击可能失效。
+- 消耗该多指序列，直到所有触点结束。普通单指、笔、鼠标及其拖动保持原消息路径，不重建点击，不模拟方向键。
+- 对传统 `WM_GESTURE` 路径补充过滤 `GID_ZOOM`，保留其他传统手势。
+- `PPTOpticalZoom` 原生选区出现后恢复多指；Esc、原生右键退出或换页时恢复限制。
+- 移除旧版 `InputShield` 透明窗口。不使用全局输入钩子、不注入其他进程、不更改课件文件。
 
-## 用户实机反馈与保留限制
+当前正常模式下会取消包含多个触摸接触点的操作，不能声称只取消捏合而保留全部其他多指手势。单指滑动由 PowerPoint 自己识别。
 
-用户已确认双指缩放屏蔽成功，同时左侧菜单栏也会被屏蔽。按照用户要求，本版本不修复该行为；公开发布时必须保留这项说明。
+## 验证记录
 
-输入过滤窗口覆盖整个放映窗口，没有为左侧菜单栏单独设置命中穿透区域。因此不能把整体输入过滤描述为只影响双指缩放、完全不影响所有菜单控件。需要使用原生缩放时，可采用已测试的长按菜单入口。
+Windows 11、64 位 PowerPoint 2024 2408，Build 16.0.17932.21056。使用自建两页临时课件，内嵌本地生成的 12 秒测试视频；通过 Windows 触摸注入接口输入真实触摸序列。
 
-`SetGestureConfig` 作为传统手势路径的补充；在所测 PowerPoint 2024 中，它本身不能拦住通过现代指针输入触发的缩放，因此不将接口返回成功视为功能通过。
-
-本版本的原生窗口类名、内部退出命令与 Office 2024 2408 的实际行为有关。其他版本需要重新验证。没有进程注入、没有全局鼠标或键盘输入拦截，不修改课件文件。
-
-## 已验证
-
-测试环境：Windows 11，PowerPoint 2024 2408，16.0.17932.21056，64 位；使用 Windows 触摸注入接口操作临时测试演示文稿。
+为避免在用户打开的 PowerPoint 进程中复用 CLR 已加载的旧程序集，候选实现使用独立测试类标识和程序集名加载。发布源码恢复正式 COM 标识；触摸过滤实现相同，并重新编译、校验发布 DLL。测试仅关闭自己创建的演示文稿，结束时断开测试加载项并移除临时注册。
 
 | 场景 | 结果 |
 |---|---|
-| 正常全屏放映时双指捏合 | 平铺总览未出现，保留当前页 |
-| 单指点击 | 第 1 页进入第 2 页 |
-| 单指向右滑动 | 第 2 页返回第 1 页 |
-| 长按后手指点选原有“放大幻灯片”菜单 | 原生选区出现，过滤关闭 |
-| 选定放大区域后双指展开 | PowerPoint 接收缩放，过滤保持关闭 |
-| 原生右键退出缩放 | 自动重新过滤 |
-| 再次双指捏合 | 平铺总览未出现 |
-| 切换到本测试课件的编辑窗口 | 过滤隐藏 |
-| 返回全屏放映 | 过滤恢复 |
-| Esc 退出缩放 | 前序同实现路径实测恢复过滤 |
+| 无加载项的双指缩小基线 | 出现幻灯片平铺总览 |
+| 正常放映时双指缩小 | 未出现总览，保持当前页 |
+| 单指滑动 | 第 2 页返回第 1 页 |
+| 单指点击内嵌视频 | 播放进度由 0 前进到约 900 毫秒 |
+| 视频和空白区域双指展开 | 保持当前页 |
+| 两指先后落下、先后抬起，重复操作 | 未出现总览或意外翻页 |
+| 多指操作后重新点击视频 | 播放进度正常前进 |
+| 原生右键菜单选择放大幻灯片、鼠标选定区域 | 自动放开双指缩放 |
+| 放大状态下双指展开 | PowerPoint 收到原生双指输入 |
+| 原生右键退出缩放 | 恢复锁定，无残留抑制状态 |
 
-实机批注、压感、第三方批注、演示者视图、多屏和其他版本待验证。不能将模拟输入验证替代真实大屏验收。
+纯触屏长按菜单、放大区域选定、左侧菜单栏、视频暂停与进度条拖动、压感批注、第三方批注、多屏和其他版本仍需实机验证。不能以模拟输入代替真实大屏验收。
 
-用户后续的单项实机反馈仅更新对应项目，不视为整个实机兼容性测试矩阵已经通过。
+## v0.1.0 历史限制
+
+旧版使用几乎透明的输入覆盖窗口，重新转发单指点击、滑动和长按。用户确认能屏蔽缩放，但左侧菜单栏被一并挡住，随后反馈内嵌视频点击无反应。前一次按用户要求保留并记录了菜单栏限制；v0.2.0 根据后续需求撤掉覆盖层，改用原生消息过滤。
 
 ## 重新编译
 
-需有 Office 桌面版、.NET Framework 编译器及 Windows SDK 的 TlbImp 工具。运行 `Build.ps1`；生成的 DLL 不依赖额外的互操作 DLL 或 VSTO Runtime。
+运行 `source/Build.ps1`。需安装 Office 桌面版、.NET Framework 编译器以及 Windows SDK 的 TlbImp 工具；生成的 DLL 不依赖独立互操作 DLL 或 VSTO Runtime。
 
-若要替换安装包中的 DLL，应同时更新 `manifest.json` 中的 SHA-256，然后关闭 PowerPoint 后重新安装。不要在已加载 DLL 的运行实例中直接替换程序集。
+运行 `scripts/Package.ps1` 自动更新安装包清单中的 DLL 与源码 SHA-256。不要直接替换已被运行中的 PowerPoint 加载的 DLL。
 
 接口参考：
 
-- https://learn.microsoft.com/en-us/office/vba/api/powerpoint.application.slideshowbegin
+- https://learn.microsoft.com/en-us/windows/win32/inputmsg/wm-pointerdown
+- https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getpointerframeinfo
+- https://learn.microsoft.com/en-us/windows/win32/inputmsg/wm-pointercapturechanged
 - https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setgestureconfig
-- https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getpointerinfo

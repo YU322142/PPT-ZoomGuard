@@ -1,9 +1,9 @@
 {
   "name": "LessonZoomGuard",
-  "version": "0.1.0-preview",
+  "version": "0.2.0-preview",
   "platform": "win64",
-  "dllSha256": "3DE07163F290BF18203A584652FD368A79348105614182C24AFB68446C3B7D75",
-  "sourceSha256": "0E17AC5AD10C6F035A302CA4CC71BDF2D447CE8BD716BF11D59F5AD0F50CA2D2",
+  "dllSha256": "BF6F153A43FCD130E157C24AA4B0CEB53AC536ADE21A9497538764421D504540",
+  "sourceSha256": "208DF209C4D3F75B11FC0734FF74879175D354195CE4D40541EAD544AEE60D8B",
   "testedPowerPoint": "16.0.17932.21056",
   "testedOfficeVersion": "2408",
   "testedWindows": "Windows 11",
@@ -11,10 +11,13 @@
   "inkValidated": false,
   "license": "MIT",
   "repository": "https://github.com/YU322142/PPT-ZoomGuard",
-  "userFeedback": {
-    "pinchBlockingConfirmed": true,
-    "leftMenuBarBlocked": true,
-    "leftMenuBarLimitationRetained": true,
-    "scope": "Partial device feedback; full compatibility validation remains pending."
+  "automatedTouchChecks": {
+    "pinchBlocking": true,
+    "staggeredContacts": true,
+    "nativeSwipe": true,
+    "videoClick": true,
+    "videoAfterMultiTouch": true,
+    "nativeMagnifier": true,
+    "scope": "Windows touch injection in an independent temporary presentation; classroom display validation pending."
   }
 }

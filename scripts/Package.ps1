@@ -19,7 +19,7 @@ $taskManifest=Get-Content -LiteralPath (Join-Path $taskRoot 'manifest.json') -Ra
 $taskManifest.dllSha256=(Get-FileHash -LiteralPath $taskBinary -Algorithm SHA256).Hash
 $taskManifest.sourceSha256=(Get-FileHash -LiteralPath (Join-Path $taskRoot 'source\AddIn.cs') -Algorithm SHA256).Hash
 [IO.File]::WriteAllText((Join-Path $taskStage 'manifest.json'),($taskManifest | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
-$taskZip=Join-Path $taskDist 'PPT-ZoomGuard-0.1.0-preview-win64.zip'
+$taskZip=Join-Path $taskDist 'PPT-ZoomGuard-0.2.0-preview-win64.zip'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $taskPending=Join-Path $taskDist ('package-'+[Guid]::NewGuid().ToString('N')+'.zip')
 [IO.Compression.ZipFile]::CreateFromDirectory($taskStage,$taskPending,[IO.Compression.CompressionLevel]::Optimal,$false)

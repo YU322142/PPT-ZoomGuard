@@ -7,11 +7,10 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using Extensibility;
-using System.Drawing;
 
 [assembly: ComVisible(false)]
 [assembly: AssemblyTitle("Lesson Zoom Guard")]
-[assembly: AssemblyVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
 
 namespace LessonZoomGuard
 {
@@ -41,7 +40,7 @@ namespace LessonZoomGuard
             try
             {
                 application = app;
-                Log.Write("connected version=0.1.0 arch=" + (IntPtr.Size * 8));
+                Log.Write("connected version=0.2.0-preview arch=" + (IntPtr.Size * 8));
                 Start();
                 addIn.GetType().InvokeMember("Object", BindingFlags.SetProperty, null, addIn,
                     new object[] { new GuardDiagnostics(this) });
@@ -64,10 +63,6 @@ namespace LessonZoomGuard
             Tick(null, EventArgs.Empty);
         }
 
-        
-
-        
-
         private void WindowEvent(IntPtr hook, uint ev, IntPtr h, int obj, int child, uint thread, uint time)
         {
             if (stopping || obj != 0 || child != 0 || h == IntPtr.Zero) return;
@@ -85,13 +80,7 @@ namespace LessonZoomGuard
             uint pid;
             uint thread = Native.GetWindowThreadProcessId(h, out pid);
             if (pid != (uint)Process.GetCurrentProcess().Id || thread != Native.GetCurrentThreadId()) return;
-            shows.Add(h, new ShowGuard(h, IsInkActive, delegate { return ReadViewInt("CurrentShowPosition"); }));
-        }
-
-        private bool IsInkActive()
-        {
-            int type = ReadViewInt("PointerType");
-            return type == 2 || type == 5 || type == 6;
+            shows.Add(h, new ShowGuard(h, delegate { return ReadViewInt("CurrentShowPosition"); }));
         }
 
         private int ReadViewInt(string property)
@@ -147,7 +136,7 @@ namespace LessonZoomGuard
         public string GetStatus()
         {
             Tick(null, EventArgs.Empty);
-            var result = new StringBuilder("LessonZoomGuard 0.1.0");
+            var result = new StringBuilder("LessonZoomGuard 0.2.0-preview");
             foreach (ShowGuard guard in shows.Values) result.Append("\n").Append(guard.Status);
             if (shows.Count == 0) result.Append("\nNo slide-show window.");
             return result.ToString();
@@ -182,17 +171,18 @@ namespace LessonZoomGuard
         private string lastConfiguration = "";
         private int traceBudget = 400;
         private long blocked;
-        private readonly InputShield shield;
+        private readonly HashSet<uint> touching = new HashSet<uint>();
+        private readonly Dictionary<uint, IntPtr> delivered = new Dictionary<uint, IntPtr>();
+        private bool suppressTouchSession;
         private readonly Func<int> readPosition;
         private int position;
 
-        public ShowGuard(IntPtr h, Func<bool> isInk, Func<int> getPosition)
+        public ShowGuard(IntPtr h, Func<int> getPosition)
         {
             readPosition = getPosition;
             window = h;
             original = Native.ReadZoom(h, out haveOriginal);
             AssignHandle(h);
-            shield = new InputShield(h, isInk);
             Apply();
             Log.Write("show attached h=" + h + " original=" + original.Want + "/" + original.Block + " read=" + haveOriginal);
         }
@@ -200,7 +190,7 @@ namespace LessonZoomGuard
         public string Status
         {
             get { return "hwnd=" + window + " mode=" + (enabled ? "zoom-enabled" : "zoom-locked") +
-                " config=" + lastConfiguration + " blocked=" + blocked + " shield=" + shield.Visible + " rejected=" + shield.Rejected; }
+                " config=" + lastConfiguration + " blocked=" + blocked + " native-input=true suppressed=" + suppressTouchSession; }
         }
 
         public void Refresh()
@@ -212,18 +202,44 @@ namespace LessonZoomGuard
             if (current > 0) position = current;
             if (selection && !selectorSeen) SetMode(true, "native magnifier selector");
             selectorSeen = selection;
-            shield.RefreshGate(!enabled);
         }
 
-        
-
-        
+        public bool FilterPointer(IntPtr recipient, uint message, IntPtr wParam)
+        {
+            uint id = (uint)(wParam.ToInt64() & 0xffff);
+            Native.PointerInfo pointer;
+            if (!Native.GetPointerInfo(id, out pointer) || pointer.Type != 2) return false;
+            if (message == 0x246) touching.Add(id);
+            if (enabled) return false;
+            uint count = Native.TouchContactsInFrame(id);
+            if (!enabled && !suppressTouchSession && (count > 1 || touching.Count > 1))
+            {
+                suppressTouchSession = true;
+                blocked++;
+                Log.Write("multi-touch cancelled frame=" + pointer.Frame + " count=" + count);
+                foreach (var prior in new List<KeyValuePair<uint, IntPtr>>(delivered))
+                {
+                    // Bypass our filter so PowerPoint receives the cancellation.
+                    Message cancellation = Message.Create(prior.Value, 0x24c, new IntPtr(prior.Key), IntPtr.Zero);
+                    base.WndProc(ref cancellation);
+                }
+                delivered.Clear();
+            }
+            bool reject = suppressTouchSession && !enabled;
+            if (!reject && message == 0x246) delivered[id] = recipient;
+            if (message == 0x247 || message == 0x24c)
+            {
+                touching.Remove(id); delivered.Remove(id);
+                if (touching.Count == 0 && count == 0) suppressTouchSession = false;
+            }
+            return reject;
+        }
 
         private void SetMode(bool allow, string reason)
         {
             if (enabled == allow) return;
             enabled = allow;
-            if (shield != null) shield.RefreshGate(!enabled);
+            touching.Clear(); delivered.Clear(); suppressTouchSession = false;
             Apply();
             Log.Write("mode h=" + window + " allow=" + allow + " reason=" + reason);
         }
@@ -247,6 +263,11 @@ namespace LessonZoomGuard
         {
             try
             {
+                // Preserve original single-finger/pen/mouse input. Only touch
+                // sequences with multiple contacts are consumed, at dispatch time.
+                // GetPointerFrameInfo is valid here, unlike queued-message hooks.
+                if (m.Msg >= 0x245 && m.Msg <= 0x24c && FilterPointer(window, (uint)m.Msg, m.WParam))
+                { m.Result = IntPtr.Zero; return; }
                 if (Log.Tracing && traceBudget > 0 && (m.Msg >= 0x400 || (m.Msg >= 0x240 && m.Msg <= 0x24F) || m.Msg == 0x111 || m.Msg == 0x100 || m.Msg == 0x201 || m.Msg == 0x202 || m.Msg == 0x210))
                 {
                     traceBudget--;
@@ -285,7 +306,6 @@ namespace LessonZoomGuard
         {
             if (disposed) return;
             disposed = true;
-            shield.Dispose();
             if (Native.IsWindow(window) && haveOriginal)
             {
                 var setting = original;
@@ -296,171 +316,18 @@ namespace LessonZoomGuard
         }
     }
 
-    internal sealed class InputShield : Form
-    {
-        private readonly IntPtr target;
-        private readonly Func<bool> isInk;
-        private readonly HashSet<uint> contacts = new HashSet<uint>();
-        private bool multi, drawing;
-        private uint primary;
-        private Point start, last;
-        private long started;
-        internal long Rejected;
-
-        internal InputShield(IntPtr window, Func<bool> ink)
-        {
-            target = window; isInk = ink;
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            StartPosition = FormStartPosition.Manual;
-            BackColor = Color.Black;
-            Opacity = 1.0 / 255.0;
-            TopMost = true;
-        }
-        protected override bool ShowWithoutActivation { get { return true; } }
-        protected override CreateParams CreateParams
-        {
-            get { var cp = base.CreateParams; cp.ExStyle |= 0x08000080; cp.Parent = target; return cp; }
-        }
-        protected override void OnVisibleChanged(EventArgs e)
-        {
-            if (!Visible) { contacts.Clear(); multi = false; drawing = false; }
-            base.OnVisibleChanged(e);
-        }
-        internal void RefreshGate(bool locked)
-        {
-            IntPtr foreground = Native.GetForegroundWindow();
-            bool active = foreground == target || foreground == Handle;
-            if (!locked || !active || !Native.IsWindowVisible(target))
-            {
-                if (Visible) Hide();
-                return;
-            }
-            Native.Rect r;
-            if (!Native.GetWindowRect(target, out r)) return;
-            var wanted = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
-            if (Bounds != wanted) Bounds = wanted;
-            if (!Visible) Show();
-        }
-
-        private Point ClientPoint(Native.Point point)
-        {
-            Native.ScreenToClient(target, ref point);
-            return new Point(point.X, point.Y);
-        }
-        private IntPtr Pack(Point p) { return new IntPtr(unchecked((int)((uint)(ushort)p.X | ((uint)(ushort)p.Y << 16)))); }
-        private void Mouse(uint message, int keys, Point point)
-        {
-            Native.PostMessage(target, message, new IntPtr(keys), Pack(point));
-        }
-        
-        private void FinishTap(Point point)
-        {
-            int dx = point.X - start.X, dy = point.Y - start.Y;
-            if (Math.Abs(dx) > 100 && Math.Abs(dx) > Math.Abs(dy) * 2)
-            {
-                int key = dx < 0 ? 0x27 : 0x25;
-                Native.PostMessage(target, 0x100, new IntPtr(key), IntPtr.Zero);
-                Native.PostMessage(target, 0x101, new IntPtr(key), IntPtr.Zero);
-            }
-            else if (Math.Abs(dx) < 60 && Math.Abs(dy) < 60 && Environment.TickCount - started >= 650)
-            {
-                Mouse(0x204, 2, point); Mouse(0x205, 0, point);
-            }
-            else if (Math.Abs(dx) < 60 && Math.Abs(dy) < 60)
-            {
-                Mouse(0x200, 0, point); Mouse(0x201, 1, point); Mouse(0x202, 0, point);
-            }
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == 0x21 || m.Msg == 0x24b) { m.Result = new IntPtr(3); return; }
-            if (m.Msg >= 0x245 && m.Msg <= 0x24f)
-            {
-                uint id = (uint)(m.WParam.ToInt64() & 0xffff);
-                Native.PointerInfo info;
-                if (Native.GetPointerInfo(id, out info) && (info.Type == 2 || info.Type == 3))
-                {
-                    Point p = ClientPoint(info.Pixel);
-                    if (m.Msg == 0x246)
-                    {
-                        if (contacts.Count == 0) { primary = id; multi = false; start = last = p; started = Environment.TickCount; drawing = isInk() || info.Type == 3; }
-                        contacts.Add(id);
-                        uint count = 0; Native.GetPointerFrameInfo(id, ref count, IntPtr.Zero);
-                        if (contacts.Count > 1 || count > 1)
-                        {
-                            if (!multi) Rejected++;
-                            multi = true;
-                            if (drawing) Native.SendMessage(target, 0x24c, new IntPtr(primary), IntPtr.Zero);
-                            drawing = false;
-                        }
-                        else if (drawing && id == primary)
-                        {
-                            Native.SendMessage(target, 0x249, m.WParam, m.LParam);
-                            Native.SendMessage(target, (uint)m.Msg, m.WParam, m.LParam);
-                        }
-                    }
-                    else if (m.Msg == 0x245 && id == primary && !multi)
-                    {
-                        last = p;
-                        if (drawing) Native.SendMessage(target, (uint)m.Msg, m.WParam, m.LParam);
-                    }
-                    else if (m.Msg == 0x247)
-                    {
-                        if (id == primary && !multi)
-                        {
-                            if (drawing) Native.SendMessage(target, (uint)m.Msg, m.WParam, m.LParam);
-                            else if (!drawing) FinishTap(p);
-                        }
-                        contacts.Remove(id);
-                        if (contacts.Count == 0) { multi = false; drawing = false; }
-                    }
-                    else if (m.Msg == 0x24c)
-                    {
-                        contacts.Remove(id);
-                        if (contacts.Count == 0) { multi = false; drawing = false; }
-                    }
-                    m.Result = IntPtr.Zero; return;
-                }
-            }
-            if ((m.Msg >= 0x200 && m.Msg <= 0x20e) || m.Msg == 0x2a3)
-            {
-                // Windows can also promote touch to mouse; the pointer path above
-                // already handled those contacts, so only forward real mouse input.
-                long extra = Native.GetMessageExtraInfo().ToInt64();
-                if ((extra & 0xffffff00L) != 0xff515700L)
-                    Native.PostMessage(target, (uint)m.Msg, m.WParam, m.LParam);
-                m.Result = IntPtr.Zero; return;
-            }
-            if (m.Msg == 0x20)
-            {
-                m.Result = Native.SendMessage(target, 0x20, target, m.LParam); return;
-            }
-            base.WndProc(ref m);
-        }
-    }
-
     internal static class Native
     {
         internal delegate bool EnumCallback(IntPtr h, IntPtr l);
         internal delegate void WinEventCallback(IntPtr hook, uint ev, IntPtr h, int obj, int child, uint thread, uint time);
-        internal delegate IntPtr MessageHook(int code, IntPtr w, IntPtr l);
         [StructLayout(LayoutKind.Sequential)] internal struct Point { public int X, Y; }
         [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
-        [StructLayout(LayoutKind.Sequential)] internal struct MouseInput { public int X, Y; public uint Data, Flags, Time; public IntPtr Extra; }
-        [StructLayout(LayoutKind.Sequential)] internal struct Input { public uint Type; public MouseInput Mouse; }
         [StructLayout(LayoutKind.Sequential)] internal struct PointerInfo
         {
             public uint Type, Id, Frame, Flags; public IntPtr Device, Target;
             public Point Pixel, Himetric, PixelRaw, HimetricRaw;
             public uint Time, History; public int InputData; public uint Keys;
             public ulong Performance; public uint Change;
-        }
-        [StructLayout(LayoutKind.Sequential)] internal struct QueuedMessage
-        {
-            public IntPtr Window; public uint Message; public IntPtr WParam, LParam;
-            public uint Time; public Point Position; public uint Private;
         }
         [StructLayout(LayoutKind.Sequential)] internal struct GestureConfig { public uint Id, Want, Block; }
         [StructLayout(LayoutKind.Sequential)] internal struct PointS { public short X, Y; }
@@ -471,18 +338,9 @@ namespace LessonZoomGuard
         }
         [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr h);
         [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr h);
-        [DllImport("user32.dll")] internal static extern bool IsTouchWindow(IntPtr h, out uint flags);
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr DefWindowProc(IntPtr h, uint message, IntPtr w, IntPtr l);
-        [DllImport("user32.dll")] internal static extern bool GetPointerType(uint id, out uint type);
         [DllImport("user32.dll")] internal static extern bool GetPointerInfo(uint id, out PointerInfo info);
-        [DllImport("user32.dll")] internal static extern IntPtr GetMessageExtraInfo();
-        [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] internal static extern bool GetWindowRect(IntPtr h, out Rect r);
-        [DllImport("user32.dll")] internal static extern bool ScreenToClient(IntPtr h, ref Point p);
-        [DllImport("user32.dll")] internal static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
         [DllImport("user32.dll", SetLastError = true)] internal static extern bool GetPointerFrameInfo(uint id, ref uint count, IntPtr pointers);
-        [DllImport("user32.dll")] internal static extern IntPtr GetAncestor(IntPtr h, uint flags);
         [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
         [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumCallback callback, IntPtr l);
@@ -494,6 +352,27 @@ namespace LessonZoomGuard
         [DllImport("user32.dll")] internal static extern bool CloseGestureInfoHandle(IntPtr h);
         [DllImport("user32.dll")] internal static extern IntPtr SetWinEventHook(uint first, uint last, IntPtr module, WinEventCallback callback, uint pid, uint thread, uint flags);
         [DllImport("user32.dll")] internal static extern bool UnhookWinEvent(IntPtr hook);
+
+        internal static uint TouchContactsInFrame(uint id)
+        {
+            uint count = 0;
+            GetPointerFrameInfo(id, ref count, IntPtr.Zero);
+            if (count == 0 || count > 256) return 0;
+            int size = Marshal.SizeOf(typeof(PointerInfo));
+            IntPtr buffer = Marshal.AllocHGlobal(checked(size * (int)count));
+            try
+            {
+                if (!GetPointerFrameInfo(id, ref count, buffer)) return 0;
+                uint contacts = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    var p = (PointerInfo)Marshal.PtrToStructure(IntPtr.Add(buffer, i * size), typeof(PointerInfo));
+                    if (p.Type == 2 && (p.Flags & 4) != 0) contacts++;
+                }
+                return contacts;
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
 
         internal static string ClassName(IntPtr h) { var b = new StringBuilder(256); GetClassName(h, b, b.Capacity); return b.ToString(); }
         internal static List<IntPtr> ShowWindows(uint process)
